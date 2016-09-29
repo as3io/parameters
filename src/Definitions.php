@@ -72,7 +72,7 @@ class Definitions
                 }
                 return (String) $value;
             case 'object':
-                return (Object) $value;
+                return (Array) $value;
             case 'string':
                 return (String) $value;
             case 'integer':

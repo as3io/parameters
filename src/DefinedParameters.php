@@ -14,11 +14,12 @@ class DefinedParameters extends Parameters
      *
      * @param   Definitions $definitions
      * @param   array       $parameters
+     * @param   string      $sep
      */
-    public function __construct(Definitions $definitions, array $parameters = [])
+    public function __construct(Definitions $definitions, array $parameters = [], $sep = '.')
     {
         $this->definitions = $definitions;
-        parent::__construct($parameters);
+        parent::__construct($parameters, $sep);
     }
 
     /**
@@ -68,13 +69,17 @@ class DefinedParameters extends Parameters
     /**
      * {@inheritdoc}
      */
-    public function set($key, $value)
+    public function set($path, $value)
     {
-        if (false === $this->definitions->has($key)) {
+        $keys = $this->explode($path);
+        if (count($keys) > 1) {
+            throw new \BadMethodCallException('Setting values via a path for a defined parameter instance is not yet implemented.');
+        }
+        if (false === $this->definitions->has($keys[0])) {
             return $this;
         }
-        $value = $this->definitions->convertFor($key, $value);
-        return parent::set($key, $value);
+        $value = $this->definitions->convertFor($keys[0], $value);
+        return parent::set($keys[0], $value);
     }
 
     /**
