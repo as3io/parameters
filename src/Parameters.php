@@ -18,13 +18,32 @@ class Parameters implements IteratorAggregate, Countable, Serializable, JsonSeri
     private $parameters;
 
     /**
+     * @var string
+     */
+    private $sep;
+
+    /**
      * Constructor.
      *
-     * @param  array    $parameters     An array of parameters
+     * @param   array   $parameters An array of parameters.
+     * @param   string  $sep        The path traversal separator.
      */
-    public function __construct(array $parameters = [])
+    public function __construct(array $parameters = [], $sep = '.')
     {
         $this->replace($parameters);
+        $this->sep = $sep;
+    }
+
+    /**
+     * Static factory method.
+     *
+     * @param   array   $parameters An array of parameters.
+     * @param   string  $sep        The path traversal separator.
+     * @return  self
+     */
+    public static function create(array $parameters = array(), $sep = '.')
+    {
+        return new static($parameters, $sep);
     }
 
     /**
@@ -67,15 +86,78 @@ class Parameters implements IteratorAggregate, Countable, Serializable, JsonSeri
     }
 
     /**
+     * Determines if a parameter exists, regardless of null value.
+     *
+     * @param  string   $path
+     * @return bool
+     */
+    public function exists($path)
+    {
+        $keys       = $this->explode($path);
+        $parameters = $this->parameters;
+
+        foreach ($keys as $key) {
+            if (!is_array($parameters)) {
+                return false;
+            }
+            if (array_key_exists($key, $parameters)) {
+                $parameters = $parameters[$key];
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Gets a parameter value.
      *
-     * @param   string  $key        The parameter key.
+     * @param   string  $path       The parameter path, such as 'foo' or 'foo.bar'
      * @param   mixed   $default    The default value to return if the key isn't found
      * @return  mixed
      */
-    public function get($key, $default = null)
+    public function get($path, $default = null)
     {
-        return isset($this->parameters[$key]) ? $this->parameters[$key] : $default;
+        $keys       = $this->explode($path);
+        $parameters = $this->parameters;
+
+        foreach ($keys as $key) {
+            if (isset($parameters[$key])) {
+                $parameters = $parameters[$key];
+            } else {
+                return $default;
+            }
+        }
+        return $parameters;
+    }
+
+    /**
+     * Gets a value based on a path, and returns an empty array if not found.
+     *
+     * @param   string  $path   The parameter path, such as 'foo' or 'foo.bar'
+     * @return  array
+     */
+    public function getAsArray($path)
+    {
+        return $this->get($path, []);
+    }
+
+    /**
+     * Gets a value based on a path, and returns it as a Parameters instance.
+     *
+     * @param   string  $path   The parameter path, such as 'foo' or 'foo.bar'
+     * @return  self
+     */
+    public function getAsInstance($path)
+    {
+        if (empty($path)) {
+            return static::create([], $this->separator);
+        }
+        $value = $this->getAsArray($path);
+        if (!is_array($value)) {
+            throw new \InvalidArgumentException('You cannot return a Parameter instance on a non-array value.');
+        }
+        return static::create($this->getAsArray($path), $this->separator);
     }
 
     /**
@@ -89,12 +171,12 @@ class Parameters implements IteratorAggregate, Countable, Serializable, JsonSeri
     /**
      * Determines if a parameter key exists, and has value (not null).
      *
-     * @param   string  $key
+     * @param   string  $path
      * @return  bool
      */
-    public function has($key)
+    public function has($path)
     {
-        return null !== $this->get($key, null);
+        return null !== $this->get($path, null);
     }
 
     /**
@@ -139,15 +221,31 @@ class Parameters implements IteratorAggregate, Countable, Serializable, JsonSeri
     }
 
     /**
-     * Removes a parameter.
+     * Removes/unsets a value at the provided path.
      *
      * @param   string  $key
      * @return  self
      */
-    public function remove($key)
+    public function remove($path)
     {
-        if ($this->has($key)) {
-            unset($this->parameters[$key]);
+        $keys       = $this->explode($path);
+        $parameters = &$this->parameters;
+
+        while (count($keys) > 0) {
+            if (count($keys) === 1) {
+                if (is_array($parameters)) {
+                    unset($parameters[array_shift($keys)]);
+                } else {
+                    return $this;
+                }
+            } else {
+                $key = array_shift($keys);
+
+                if (!isset($parameters[$key])) {
+                    return $this;
+                }
+                $parameters = &$parameters[$key];
+            }
         }
         return $this;
     }
@@ -160,7 +258,8 @@ class Parameters implements IteratorAggregate, Countable, Serializable, JsonSeri
      */
     public function replace(array $parameters)
     {
-        $this->parameters = $parameters;
+        $this->parameters = $this->castObjectsAsArrays($parameters);
+
         return $this;
     }
 
@@ -169,19 +268,38 @@ class Parameters implements IteratorAggregate, Countable, Serializable, JsonSeri
      */
     public function serialize()
     {
-        return serialize($this->parameters);
+        return serialize([
+            $this->parameters,
+            $this->sep,
+        ]);
     }
 
     /**
-     * Sets a value to a key.
+     * Sets a value to a key path.
      *
-     * @param   string  $key
+     * @param   string  $path
      * @param   mixed   $value
      * @return  self
      */
-    public function set($key, $value)
+    public function set($path, $value)
     {
-        $this->parameters[$key] = $value;
+        $keys       = $this->explode($path);
+        $parameters = &$this->parameters;
+
+        while (count($keys) > 0) {
+            if (count($keys) === 1) {
+                if (!is_array($parameters)) {
+                    $parameters = [];
+                }
+                $parameters[array_shift($keys)] = $value;
+            } else {
+                $key = array_shift($keys);
+                if (!isset($parameters[$key])) {
+                    $parameters[$key] = [];
+                }
+                $parameters = &$parameters[$key];
+            }
+        }
         return $this;
     }
 
@@ -211,7 +329,10 @@ class Parameters implements IteratorAggregate, Countable, Serializable, JsonSeri
      */
     public function unserialize($serialized)
     {
-        $this->parameters = unserialize($serialized);
+        list(
+            $this->parameters,
+            $this->sep
+        ) = unserialize($serialized);
     }
 
     /**
@@ -222,5 +343,36 @@ class Parameters implements IteratorAggregate, Countable, Serializable, JsonSeri
     public function valid()
     {
         return true;
+    }
+
+    /**
+     * Explodes a path based on the internal separator.
+     *
+     * @param   string|array    $path
+     * @return  array
+     */
+    protected function explode($path)
+    {
+        return is_array($path) ? $path : explode($this->sep, $path);
+    }
+
+    /**
+     * Ensures any object values are cast as arrays. Is recursive.
+     *
+     * @param   array   $parameters
+     * @return  array
+     */
+    private function castObjectsAsArrays(array $parameters)
+    {
+        foreach ($parameters as $key => $value) {
+            if (is_object($value)) {
+                $value = (array) $value;
+                $parameters[$key] = $value;
+            }
+            if (is_array($value)) {
+                $parameters[$key] = $this->castObjectsAsArrays($value);
+            }
+        }
+        return $parameters;
     }
 }
